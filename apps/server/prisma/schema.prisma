@@ -1,0 +1,45 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Track {
+  id          String     @id
+  slug        String     @unique
+  name        String
+  description String
+  icon        String
+  ods         String
+  accent      String
+  sortOrder   Int
+  questions   Question[]
+}
+
+model Question {
+  id              String   @id
+  trackId         String
+  sortOrder       Int
+  prompt          String
+  explanation     String
+  ods             String
+  timeLimit       Int      @default(20)
+  correctOptionId String
+  track           Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  options         Option[]
+
+  @@index([trackId])
+}
+
+model Option {
+  id         String   @id
+  questionId String
+  label      String
+  text       String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId])
+}

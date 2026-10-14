@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color: #172923;
+  background: #f8faf7;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background:
+    linear-gradient(180deg, rgba(234, 243, 232, 0.72), rgba(248, 250, 247, 0) 420px),
+    #f8faf7;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 3px solid rgba(47, 128, 84, 0.35);
+  outline-offset: 3px;
+}
+
+.answer-a {
+  --answer-bg: #e8f6ee;
+  --answer-border: #2f8054;
+  --answer-text: #164b35;
+}
+
+.answer-b {
+  --answer-bg: #fff0ed;
+  --answer-border: #d6604d;
+  --answer-text: #8a2f25;
+}
+
+.answer-c {
+  --answer-bg: #edf5ff;
+  --answer-border: #3274c9;
+  --answer-text: #1d4d85;
+}
+
+.answer-d {
+  --answer-bg: #fff8e6;
+  --answer-border: #d59620;
+  --answer-text: #7a4c00;
+}
