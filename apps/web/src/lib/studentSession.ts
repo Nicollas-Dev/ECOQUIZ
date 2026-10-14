@@ -8,4 +8,6 @@ export const getStudentNickname = (pin: string) => window.sessionStorage.getItem
 
 export const clearStudentNickname = (pin: string) => {
   window.sessionStorage.removeItem(keyForPin(pin));
+  window.sessionStorage.removeItem(`ecoquiz:participant:${pin}`);
+  window.sessionStorage.removeItem(`ecoquiz:answers:${pin}`);
 };

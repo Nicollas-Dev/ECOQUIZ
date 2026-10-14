@@ -21,17 +21,26 @@ model Track {
 
 model Question {
   id              String   @id
-  trackId         String
+  trackId         String?
   sortOrder       Int
   prompt          String
   explanation     String
   ods             String
   timeLimit       Int      @default(20)
   correctOptionId String
-  track           Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  difficulty      String   @default("easy")
+  origin          String   @default("legacy")
+  odsId           String?
+  sourceUrl       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  track           Track?   @relation(fields: [trackId], references: [id], onDelete: SetNull)
+  odsCategory     Ods?     @relation(fields: [odsId], references: [id], onDelete: SetNull)
   options         Option[]
+  quizQuestions   QuizQuestion[]
 
   @@index([trackId])
+  @@index([odsId, difficulty])
 }
 
 model Option {
@@ -42,4 +51,61 @@ model Option {
   question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
 
   @@index([questionId])
+}
+
+model Ods {
+  id          String @id
+  number      Int @unique
+  name        String
+  description String
+  color       String
+  icon        String
+  questions   Question[]
+}
+
+model Creator {
+  id        String @id
+  tokenHash String @unique
+  userId    String?
+  createdAt DateTime @default(now())
+  quizzes   Quiz[]
+}
+
+model Quiz {
+  id               String @id
+  creatorId        String
+  title            String
+  description      String @default("")
+  category         String @default("")
+  odsIds           String @default("[]")
+  defaultTimeLimit Int @default(20)
+  randomOrder      Boolean @default(false)
+  revision         Int @default(1)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  creator          Creator @relation(fields: [creatorId], references: [id])
+  questions        QuizQuestion[]
+
+  @@index([creatorId, updatedAt])
+}
+
+model QuizQuestion {
+  id               String @id
+  quizId           String
+  sourceQuestionId String?
+  sortOrder        Int
+  prompt           String
+  options          String
+  correctOptionId  String
+  explanation      String @default("")
+  difficulty       String @default("easy")
+  timeLimit        Int @default(20)
+  origin           String @default("custom")
+  odsId            String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  quiz             Quiz @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  sourceQuestion   Question? @relation(fields: [sourceQuestionId], references: [id], onDelete: SetNull)
+
+  @@unique([quizId, sortOrder])
 }

@@ -1,90 +1,43 @@
+import "dotenv/config";
 import { spawnSync } from "node:child_process";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { createHash } from "node:crypto";
 
 process.env.DATABASE_URL ??= "file:./dev.db";
-
-const scriptDir = dirname(fileURLToPath(import.meta.url));
-const serverDir = resolve(scriptDir, "..");
-
-const run = (command, args) => {
-  const executable = join(serverDir, "node_modules", ".bin", process.platform === "win32" ? `${command}.CMD` : command);
-  const quote = (value) => `"${String(value).replaceAll('"', '\\"')}"`;
-  const result = spawnSync([quote(executable), ...args.map(quote)].join(" "), {
-    cwd: serverDir,
-    env: process.env,
-    shell: true,
-    stdio: "inherit"
-  });
-
-  if (result.error) {
-    console.error(result.error.message);
-  }
-
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1);
-  }
+const serverDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const run = (relative, args) => {
+  const result = spawnSync(process.execPath, [join(serverDir, relative), ...args], { cwd: serverDir, env: process.env, stdio: "inherit" });
+  if (result.status !== 0) process.exit(result.status ?? 1);
 };
-
-const resolveDatabasePath = () => {
-  const value = process.env.DATABASE_URL ?? "file:./dev.db";
-
-  if (!value.startsWith("file:")) {
-    throw new Error("db:prepare local aceita apenas DATABASE_URL SQLite no formato file:.");
+const url = process.env.DATABASE_URL;
+if (!url.startsWith("file:")) throw new Error("DATABASE_URL deve usar SQLite (file:).");
+const path = url.slice(5);
+const database = new DatabaseSync(isAbsolute(path) ? path : resolve(serverDir, "prisma", path));
+database.exec('PRAGMA foreign_keys = OFF; CREATE TABLE IF NOT EXISTS "_EcoquizMigration" (name TEXT PRIMARY KEY, checksum TEXT NOT NULL, appliedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);');
+const migrationsDir = join(serverDir, "prisma", "migrations");
+for (const entry of readdirSync(migrationsDir, { withFileTypes: true }).filter(e => e.isDirectory()).sort((a,b) => a.name.localeCompare(b.name))) {
+  const sql = readFileSync(join(migrationsDir, entry.name, "migration.sql"), "utf8");
+  const checksum = createHash("sha256").update(sql).digest("hex");
+  const applied = database.prepare('SELECT checksum FROM "_EcoquizMigration" WHERE name = ?').get(entry.name);
+  if (applied) {
+    if (applied.checksum !== checksum) throw new Error(`Migration já aplicada foi modificada: ${entry.name}`);
+    continue;
   }
-
-  const sqlitePath = value.replace(/^file:/, "");
-  return isAbsolute(sqlitePath) ? sqlitePath : resolve(serverDir, "prisma", sqlitePath);
-};
-
-const prepareSqlite = () => {
-  const database = new DatabaseSync(resolveDatabasePath());
-
-  database.exec(`
-    PRAGMA foreign_keys = ON;
-
-    CREATE TABLE IF NOT EXISTS "Track" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "slug" TEXT NOT NULL,
-      "name" TEXT NOT NULL,
-      "description" TEXT NOT NULL,
-      "icon" TEXT NOT NULL,
-      "ods" TEXT NOT NULL,
-      "accent" TEXT NOT NULL,
-      "sortOrder" INTEGER NOT NULL
-    );
-
-    CREATE UNIQUE INDEX IF NOT EXISTS "Track_slug_key" ON "Track"("slug");
-
-    CREATE TABLE IF NOT EXISTS "Question" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "trackId" TEXT NOT NULL,
-      "sortOrder" INTEGER NOT NULL,
-      "prompt" TEXT NOT NULL,
-      "explanation" TEXT NOT NULL,
-      "ods" TEXT NOT NULL,
-      "timeLimit" INTEGER NOT NULL DEFAULT 20,
-      "correctOptionId" TEXT NOT NULL,
-      CONSTRAINT "Question_trackId_fkey" FOREIGN KEY ("trackId") REFERENCES "Track" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "Question_trackId_idx" ON "Question"("trackId");
-
-    CREATE TABLE IF NOT EXISTS "Option" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "questionId" TEXT NOT NULL,
-      "label" TEXT NOT NULL,
-      "text" TEXT NOT NULL,
-      CONSTRAINT "Option_questionId_fkey" FOREIGN KEY ("questionId") REFERENCES "Question" ("id") ON DELETE CASCADE ON UPDATE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS "Option_questionId_idx" ON "Option"("questionId");
-  `);
-
-  database.close();
-};
-
-run("prisma", ["generate"]);
-prepareSqlite();
-run("tsx", [join("prisma", "seed.ts")]);
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    database.exec(sql);
+    if (database.prepare("PRAGMA foreign_key_check").all().length) throw new Error("Migration violou relacionamentos.");
+    database.prepare('INSERT INTO "_EcoquizMigration" (name, checksum) VALUES (?, ?)').run(entry.name, checksum);
+    database.exec("COMMIT");
+    console.log(`Migration aplicada: ${entry.name}`);
+  } catch (error) { database.exec("ROLLBACK"); throw error; }
+}
+database.exec("PRAGMA foreign_keys = ON");
+database.close();
+if (!process.argv.includes("--migrate-only")) {
+  run("node_modules/prisma/build/index.js", ["generate"]);
+  run("node_modules/tsx/dist/cli.mjs", ["prisma/seed.ts"]);
+}

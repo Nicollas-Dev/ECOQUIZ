@@ -2,23 +2,29 @@
   "name": "ecoquiz",
   "version": "0.1.0",
   "private": true,
-  "description": "ECOQUIZ - plataforma gamificada de educação ambiental.",
+  "description": "ECOQUIZ - quizzes personalizados e banco educacional dos 17 ODS.",
   "type": "module",
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n server,web -c \"#2F8054,#2563EB\" \"npm run dev --workspace @ecoquiz/server\" \"npm run dev --workspace @ecoquiz/web\"",
-    "dev:pnpm": "concurrently -n server,web -c \"#2F8054,#2563EB\" \"pnpm --filter @ecoquiz/server dev\" \"pnpm --filter @ecoquiz/web dev\"",
-    "build": "npm run build --workspace @ecoquiz/shared && npm run build --workspace @ecoquiz/server && npm run build --workspace @ecoquiz/web",
-    "build:pnpm": "pnpm --filter @ecoquiz/shared build && pnpm --filter @ecoquiz/server build && pnpm --filter @ecoquiz/web build",
-    "typecheck": "npm run typecheck --workspace @ecoquiz/shared && npm run typecheck --workspace @ecoquiz/server && npm run typecheck --workspace @ecoquiz/web",
-    "typecheck:pnpm": "pnpm --filter @ecoquiz/shared typecheck && pnpm --filter @ecoquiz/server typecheck && pnpm --filter @ecoquiz/web typecheck",
-    "db:prepare": "npm run db:prepare --workspace @ecoquiz/server",
-    "db:prepare:pnpm": "pnpm --filter @ecoquiz/server db:prepare"
+    "test": "pnpm --filter @ecoquiz/shared build && pnpm --filter @ecoquiz/server test",
+    "dev": "pnpm --filter @ecoquiz/shared build && concurrently -n server,web -c \"#2F8054,#2563EB\" \"pnpm --filter @ecoquiz/server dev\" \"pnpm --filter @ecoquiz/web dev\"",
+    "dev:pnpm": "pnpm dev",
+    "build": "pnpm --filter @ecoquiz/shared build && pnpm --filter @ecoquiz/server build && pnpm --filter @ecoquiz/web build",
+    "build:pnpm": "pnpm build",
+    "typecheck": "pnpm --filter @ecoquiz/shared typecheck && pnpm --filter @ecoquiz/server typecheck && pnpm --filter @ecoquiz/web typecheck",
+    "typecheck:pnpm": "pnpm typecheck",
+    "db:prepare": "pnpm --filter @ecoquiz/server db:prepare",
+    "db:prepare:pnpm": "pnpm db:prepare"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"
+  },
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=24",
+    "pnpm": ">=10"
   }
 }

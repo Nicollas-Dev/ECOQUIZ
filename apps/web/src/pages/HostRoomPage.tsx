@@ -30,7 +30,7 @@ export function HostRoomPage() {
     socketRef.current = socket;
 
     socket.on("connect", () => {
-      socket.emit("host:join", { pin }, (reply: Ack<RoomSnapshot>) => {
+      socket.emit("host:join", { pin, hostToken: sessionStorage.getItem(`ecoquiz:host:${pin}`) ?? "" }, (reply: Ack<RoomSnapshot>) => {
         if (reply.ok) {
           setSnapshot(reply.data);
           setError(null);

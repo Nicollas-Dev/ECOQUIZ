@@ -27,7 +27,7 @@ export function QuestionView({
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-sm font-bold text-eco-700">
-            Pergunta {snapshot.questionIndex + 1} de {snapshot.questionCount} · {question.ods}
+            Pergunta {snapshot.questionIndex + 1} de {snapshot.questionCount}{question.ods && ` · ${question.ods}`}
           </p>
           <h1 className="mt-2 text-2xl font-black leading-tight text-eco-950 sm:text-3xl">{question.prompt}</h1>
         </div>

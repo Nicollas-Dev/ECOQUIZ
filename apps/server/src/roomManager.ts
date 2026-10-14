@@ -1,4 +1,4 @@
-import { randomInt, randomUUID } from "node:crypto";
+import { randomBytes, randomInt, randomUUID } from "node:crypto";
 import type { Server, Socket } from "socket.io";
 import type {
   AnswerStat,
@@ -11,6 +11,8 @@ import type {
   Track
 } from "@ecoquiz/shared";
 import { getTrackWithQuestions, redactQuestion } from "./repositories.js";
+import { getQuiz, hashToken, shuffled } from "./quizService.js";
+import type { CreatedRoom } from "@ecoquiz/shared";
 
 const ROOM_FINISHED_TTL_MS = 15 * 60 * 1000;
 const ROOM_INACTIVE_TTL_MS = 2 * 60 * 60 * 1000;
@@ -19,6 +21,7 @@ type ParticipantState = Participant & {
   socketId: string;
   joinedAt: number;
   lastSeenAt: number;
+  tokenHash: string;
 };
 
 type AnswerState = {
@@ -37,6 +40,7 @@ type RoomState = {
   status: RoomStatus;
   participants: Map<string, ParticipantState>;
   hostSocketId?: string;
+  hostTokenHash: string;
   questionIndex: number;
   questionStartedAt?: number;
   questionEndsAt?: number;
@@ -62,20 +66,36 @@ export class RoomManager {
     cleanupInterval.unref?.();
   }
 
-  async createRoom(trackId: string): Promise<RoomSnapshot> {
-    const content = await getTrackWithQuestions(trackId);
+  async createRoom(trackId?: string, quizId?: string, creatorId?: string): Promise<CreatedRoom> {
+    if (this.rooms.size >= 500) throw new RoomError("Limite de salas ativas atingido. Tente novamente mais tarde.", 503);
+    let content: { track: Track; questions: Question[] } | null;
+    if (quizId && creatorId) {
+      const quiz = await getQuiz(creatorId, quizId);
+      content = {
+        track: { id: quiz.id, slug: quiz.id, name: quiz.title, description: quiz.description, icon: "shopping-bag", ods: quiz.odsIds.map(id => id.replace("ods-", "ODS ")), accent: "#2F8054" },
+        questions: (quiz.randomOrder ? shuffled(quiz.questions) : quiz.questions).map(q => ({
+          id: q.id, prompt: q.prompt, options: q.options, correctOptionId: q.correctOptionId, explanation: q.explanation,
+          ods: q.odsId?.replace("ods-", "ODS ") ?? "", timeLimit: q.timeLimit
+        }))
+      };
+    } else { content = trackId ? await getTrackWithQuestions(trackId) : null; }
 
     if (!content || content.questions.length === 0) {
-      throw new RoomError("Trilha não encontrada ou sem perguntas cadastradas.", 404);
+      throw new RoomError("O quiz precisa ter pelo menos uma pergunta válida.", 400);
     }
 
     const pin = this.generatePin();
     const now = Date.now();
+    const hostToken = randomBytes(32).toString("hex");
 
     const room: RoomState = {
       pin,
       track: content.track,
-      questions: content.questions,
+      questions: content.questions.map(q => {
+        const options = q.options.map(o => ({ ...o, id: randomUUID() }));
+        return { ...q, id: randomUUID(), options, correctOptionId: options[q.options.findIndex(o => o.id === q.correctOptionId)].id };
+      }),
+      hostTokenHash: hashToken(hostToken),
       status: "lobby",
       participants: new Map(),
       questionIndex: 0,
@@ -85,15 +105,18 @@ export class RoomManager {
     };
 
     this.rooms.set(pin, room);
-    return this.toSnapshot(room);
+    return { ...this.toSnapshot(room), hostToken };
   }
 
   getRoomSnapshot(pin: string): RoomSnapshot {
     return this.toSnapshot(this.expectRoom(pin));
   }
 
-  attachHost(socket: Socket, pin: string): RoomSnapshot {
+  attachHost(socket: Socket, pin: string, hostToken: string): RoomSnapshot {
     const room = this.expectRoom(pin);
+    if (hashToken(hostToken) !== room.hostTokenHash) throw new RoomError("Credencial de controle da sala inválida.", 403);
+    if (socket.data.pin && socket.data.pin !== pin) throw new RoomError("Desconecte antes de trocar de sala.");
+    if (socket.data.role === "participant") throw new RoomError("Use outra conexão para controlar a sala.");
 
     room.hostSocketId = socket.id;
     room.updatedAt = Date.now();
@@ -105,8 +128,19 @@ export class RoomManager {
     return this.toSnapshot(room);
   }
 
-  joinParticipant(socket: Socket, pin: string, nicknameInput: string): RoomSnapshot {
+  joinParticipant(socket: Socket, pin: string, nicknameInput: string, resumeToken?: string): RoomSnapshot & { participantToken: string; participantId: string } {
     const room = this.expectRoom(pin);
+    if (socket.data.pin) throw new RoomError("Você já está conectado a uma sala.", 409);
+    if (resumeToken) {
+      const participant = [...room.participants.values()].find(p => p.tokenHash === hashToken(resumeToken));
+      if (!participant) throw new RoomError("Credencial do participante inválida.", 401);
+      const oldSocket = this.io.sockets.sockets.get(participant.socketId);
+      participant.socketId = socket.id; participant.connected = true; participant.lastSeenAt = Date.now();
+      socket.data.role = "participant"; socket.data.pin = pin; socket.data.participantId = participant.id;
+      socket.join(this.channel(pin)); oldSocket?.disconnect(); this.emitRoom(room);
+      return { ...this.toSnapshot(room), participantToken: resumeToken, participantId: participant.id };
+    }
+    if (room.participants.size >= 200) throw new RoomError("Esta sala atingiu o limite de 200 participantes.");
     const nickname = nicknameInput.trim().replace(/\s+/g, " ");
 
     if (room.status !== "lobby") {
@@ -127,6 +161,7 @@ export class RoomManager {
     }
 
     const now = Date.now();
+    const participantToken = randomBytes(32).toString("hex");
     const participant: ParticipantState = {
       id: randomUUID(),
       socketId: socket.id,
@@ -134,7 +169,8 @@ export class RoomManager {
       score: 0,
       connected: true,
       joinedAt: now,
-      lastSeenAt: now
+      lastSeenAt: now,
+      tokenHash: hashToken(participantToken)
     };
 
     room.participants.set(participant.id, participant);
@@ -146,7 +182,7 @@ export class RoomManager {
     socket.join(this.channel(pin));
 
     this.emitRoom(room);
-    return this.toSnapshot(room);
+    return { ...this.toSnapshot(room), participantToken, participantId: participant.id };
   }
 
   startGame(socket: Socket, pin: string): RoomSnapshot {
@@ -158,14 +194,14 @@ export class RoomManager {
     }
 
     if (this.connectedParticipants(room).length === 0) {
-      throw new RoomError("E necessario ter pelo menos um participante conectado.");
+      throw new RoomError("É necessário ter pelo menos um participante conectado.");
     }
 
     this.startQuestion(room, 0);
     return this.toSnapshot(room);
   }
 
-  submitAnswer(socket: Socket, pin: string, optionId: string): RoomSnapshot {
+  submitAnswer(socket: Socket, pin: string, optionId: string, questionId: string): RoomSnapshot {
     const room = this.expectRoom(pin);
     const participantId = socket.data.participantId as string | undefined;
 
@@ -176,15 +212,16 @@ export class RoomManager {
     const participant = room.participants.get(participantId);
     const question = this.currentQuestion(room);
 
-    if (!participant || !participant.connected) {
+    if (!participant || !participant.connected || participant.socketId !== socket.id || socket.data.role !== "participant") {
       throw new RoomError("Participante desconectado ou não encontrado.", 401);
     }
 
     if (room.status !== "question" || !question || !room.questionStartedAt || !room.questionEndsAt) {
       throw new RoomError("Não há pergunta aberta para resposta.");
     }
+    if (question.id !== questionId) throw new RoomError("Esta resposta pertence a outra pergunta.");
 
-    if (Date.now() > room.questionEndsAt) {
+    if (Date.now() >= room.questionEndsAt) {
       throw new RoomError("O tempo para responder acabou.");
     }
 
@@ -214,7 +251,7 @@ export class RoomManager {
     room.updatedAt = answeredAt;
 
     const activeParticipants = this.connectedParticipants(room);
-    if (activeParticipants.length > 0 && room.answers.size >= activeParticipants.length) {
+    if (activeParticipants.length > 0 && activeParticipants.every(p => room.answers.has(p.id))) {
       this.revealQuestion(room.pin);
     } else {
       this.emitRoom(room);
@@ -294,7 +331,7 @@ export class RoomManager {
     room.updatedAt = Date.now();
 
     const activeParticipants = this.connectedParticipants(room);
-    if (room.status === "question" && activeParticipants.length > 0 && room.answers.size >= activeParticipants.length) {
+    if (room.status === "question" && activeParticipants.length > 0 && activeParticipants.every(p => room.answers.has(p.id))) {
       this.revealQuestion(room.pin);
       return;
     }
@@ -306,6 +343,10 @@ export class RoomManager {
     this.clearQuestionTimer(room);
 
     const question = room.questions[questionIndex];
+    const correctIndex = question.options.findIndex(o => o.id === question.correctOptionId);
+    question.id = randomUUID();
+    question.options = question.options.map(o => ({ ...o, id: randomUUID() }));
+    question.correctOptionId = question.options[correctIndex].id;
     const now = Date.now();
 
     room.status = "question";
@@ -426,7 +467,7 @@ export class RoomManager {
   }
 
   private assertHost(socket: Socket, room: RoomState): void {
-    if (room.hostSocketId !== socket.id) {
+    if (room.hostSocketId !== socket.id || socket.data.role !== "host") {
       throw new RoomError("Apenas o professor conectado pode controlar esta sala.", 403);
     }
   }

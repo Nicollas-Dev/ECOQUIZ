@@ -19,8 +19,18 @@ export function StudentRoomPage() {
   const socketRef = useRef<Socket | null>(null);
   const [snapshot, setSnapshot] = useState<RoomSnapshot | null>(null);
   const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
-  const [answersByQuestion, setAnswersByQuestion] = useState<Record<string, string>>({});
+  const [answersByQuestion, setAnswersByQuestion] = useState<Record<string, string>>(() => {
+    try { return JSON.parse(sessionStorage.getItem(`ecoquiz:answers:${pin}`) ?? "{}"); } catch { return {}; }
+  });
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    sessionStorage.setItem(`ecoquiz:answers:${pin}`, JSON.stringify(answersByQuestion));
+  }, [answersByQuestion, pin]);
+
+  useEffect(() => {
+    if (snapshot?.status === "lobby") { setAnswersByQuestion({}); setSelectedOptionId(null); }
+  }, [snapshot?.status]);
 
   useEffect(() => {
     if (!/^\d{6}$/.test(pin) || !nickname) {
@@ -32,8 +42,9 @@ export function StudentRoomPage() {
     socketRef.current = socket;
 
     socket.on("connect", () => {
-      socket.emit("participant:join", { pin, nickname }, (reply: Ack<RoomSnapshot>) => {
+      socket.emit("participant:join", { pin, nickname, resumeToken: sessionStorage.getItem(`ecoquiz:participant:${pin}`) ?? undefined }, (reply: Ack<RoomSnapshot & { participantToken: string }>) => {
         if (reply.ok) {
+          sessionStorage.setItem(`ecoquiz:participant:${pin}`, reply.data.participantToken);
           setSnapshot(reply.data);
           setError(null);
         } else {
@@ -63,7 +74,7 @@ export function StudentRoomPage() {
     }
 
     setSelectedOptionId(optionId);
-    socketRef.current?.emit("participant:answer", { pin, optionId }, (reply: Ack<RoomSnapshot>) => {
+    socketRef.current?.emit("participant:answer", { pin, optionId, questionId }, (reply: Ack<RoomSnapshot>) => {
       if (reply.ok) {
         setAnswersByQuestion((current) => ({ ...current, [questionId]: optionId }));
       } else {
